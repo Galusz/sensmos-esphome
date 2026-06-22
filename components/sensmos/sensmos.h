@@ -25,6 +25,7 @@ class SensmosComponent : public PollingComponent {
   }
 
   void update() override;
+  void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
@@ -44,6 +45,7 @@ class SensmosComponent : public PollingComponent {
   bool has_loc_{false};
   std::vector<std::pair<sensor::Sensor *, std::string>> sensors_;
   volatile bool busy_{false};      // POST trwa w osobnym tasku → nie startuj kolejnego
+  volatile bool pending_{false};   // update() zaznacza chęć wysyłki; start w loop() gdy TLS wolne
   volatile int last_status_{0};    // wynik ostatniego POST (logowany w update())
 };
 

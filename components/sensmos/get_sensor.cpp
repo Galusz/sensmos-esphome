@@ -111,46 +111,41 @@ void SensmosGetSensor::dump_config() {
 }
 
 void SensmosGetSensor::update() {
-  if (!network::is_connected())
-    return;
-  if (this->busy_) {
-    ESP_LOGW(TAG, "Previous fetch still running — skipping");
-    return;
-  }
-  // tylko jedno połączenie TLS naraz (publish + readbacki) — inaczej alloc fail na ESP32+BLE
-  if (!net_acquire()) {
-    ESP_LOGD(TAG, "TLS busy (other Sensmos request) — skipping this cycle");
-    return;
-  }
-  this->busy_ = true;
-  auto *job = new GetJob{this, GET_URL + this->device_id_};
-  // osobny task: blokujący HTTPS/TLS nie zatrzymuje pętli ESPHome ani BLE
-  if (xTaskCreate(sensmos_get_task, "sensmos_get", 10240, job,
-                  tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
-    ESP_LOGW(TAG, "Failed to start fetch task");
-    this->busy_ = false;
-    net_release();
-    delete job;
-  }
+  this->pending_ = true;  // chcemy pobrać; faktyczny start w loop() gdy łącze TLS wolne
 }
 
 void SensmosGetSensor::loop() {
-  if (!this->have_body_)
-    return;
-  this->have_body_ = false;
-
-  if (this->http_ok_) {
-    float val;
-    if (parse_value(this->body_, this->entity_, val))
-      this->publish_state(val);
-    else
-      ESP_LOGW(TAG, "Entity %s not found for node %s", this->entity_.c_str(),
-               this->device_id_.c_str());
-  } else {
-    ESP_LOGW(TAG, "GET failed for node %s", this->device_id_.c_str());
+  // 1) skonsumuj wynik poprzedniego pobrania (parsowanie + publish w pętli — logger thread-safe)
+  if (this->have_body_) {
+    this->have_body_ = false;
+    if (this->http_ok_) {
+      float val;
+      if (parse_value(this->body_, this->entity_, val))
+        this->publish_state(val);
+      else
+        ESP_LOGW(TAG, "Entity %s not found for node %s", this->entity_.c_str(),
+                 this->device_id_.c_str());
+    } else {
+      ESP_LOGW(TAG, "GET failed for node %s", this->device_id_.c_str());
+    }
+    this->body_.clear();
+    this->body_.shrink_to_fit();
   }
-  this->body_.clear();
-  this->body_.shrink_to_fit();
+
+  // 2) wystartuj nowe pobranie, gdy zaplanowane i łącze TLS wolne (jedno naraz w całym komponencie).
+  // Jak zajęte, próbujemy w kolejnym loop() — bez czekania na następny interwał (brak głodzenia).
+  if (this->pending_ && !this->busy_ && network::is_connected() && net_acquire()) {
+    this->pending_ = false;
+    this->busy_ = true;
+    auto *job = new GetJob{this, GET_URL + this->device_id_};
+    if (xTaskCreate(sensmos_get_task, "sensmos_get", 10240, job,
+                    tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
+      ESP_LOGW(TAG, "Failed to start fetch task");
+      this->busy_ = false;
+      net_release();
+      delete job;
+    }
+  }
 }
 
 }  // namespace sensmos

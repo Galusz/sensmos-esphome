@@ -38,6 +38,7 @@ class SensmosGetSensor : public sensor::Sensor, public PollingComponent {
   std::string entity_;
   std::string body_;            // surowa odpowiedź z taska → konsumowana w loop()
   volatile bool busy_{false};   // GET trwa w tasku → nie startuj kolejnego
+  volatile bool pending_{false};// update() zaznacza chęć pobrania; start w loop() gdy TLS wolne
   volatile bool have_body_{false};
   volatile bool http_ok_{false};
 };

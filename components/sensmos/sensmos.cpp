@@ -116,24 +116,23 @@ void SensmosComponent::update() {
     ESP_LOGD(TAG, "Ingest HTTP %d", this->last_status_);
     this->last_status_ = 0;
   }
-  if (!network::is_connected()) {
-    ESP_LOGW(TAG, "No network — skipping push");
-    return;
-  }
-  if (this->busy_) {
-    ESP_LOGW(TAG, "Previous push still running — skipping this cycle");
-    return;
-  }
-  // tylko jedno połączenie TLS naraz (publish + readbacki) — inaczej alloc fail na ESP32+BLE
-  if (!net_acquire()) {
-    ESP_LOGD(TAG, "TLS busy (other Sensmos request) — skipping this cycle");
-    return;
-  }
+  this->pending_ = true;  // chcemy wysłać; faktyczny start w loop() gdy łącze TLS wolne
+}
 
+void SensmosComponent::loop() {
+  if (!this->pending_ || this->busy_)
+    return;
+  if (!network::is_connected())
+    return;
+  // tylko jedno połączenie TLS naraz (publish + readbacki) — inaczej alloc fail na ESP32+BLE.
+  // Jak zajęte, próbujemy w kolejnym loop() (bez czekania na następny interwał → brak głodzenia).
+  if (!net_acquire())
+    return;
+
+  this->pending_ = false;
+  this->busy_ = true;
   std::string body = this->build_payload_();
   ESP_LOGD(TAG, "Pushing %d entities to map", (int) this->sensors_.size());
-
-  this->busy_ = true;
   auto *job = new PostJob{this, std::move(body)};
   // osobny task: blokujący HTTPS/TLS nie zatrzymuje pętli ESPHome ani BLE
   if (xTaskCreate(sensmos_post_task, "sensmos_post", 10240, job,
