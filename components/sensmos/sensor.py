@@ -9,6 +9,7 @@ from . import sensmos_ns
 
 CONF_NODE = "node"
 CONF_ENTITY = "entity"
+CONF_INSECURE = "insecure"
 
 DEPENDENCIES = ["network"]
 AUTO_LOAD = ["json"]
@@ -35,6 +36,7 @@ CONFIG_SCHEMA = (
         {
             cv.Required(CONF_NODE): _node_id,
             cv.Required(CONF_ENTITY): cv.string,
+            cv.Optional(CONF_INSECURE, default=False): cv.boolean,
         }
     )
     .extend(cv.polling_component_schema("5min"))
@@ -45,6 +47,7 @@ async def to_code(config):
     var = await sensor.new_sensor(config)
     await cg.register_component(var, config)
     cg.add(var.set_target(config[CONF_NODE], config[CONF_ENTITY]))
+    cg.add(var.set_insecure(config[CONF_INSECURE]))
 
     if CORE.is_esp32:
         esp32.include_builtin_idf_component("esp_http_client")

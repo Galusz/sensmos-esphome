@@ -16,6 +16,7 @@ class SensmosGetSensor : public sensor::Sensor, public PollingComponent {
     this->device_id_ = device_id;
     this->entity_ = entity;
   }
+  void set_insecure(bool v) { this->insecure_ = v; }  // true → http:// (bez TLS)
 
   void update() override;
   void loop() override;
@@ -37,6 +38,7 @@ class SensmosGetSensor : public sensor::Sensor, public PollingComponent {
   std::string device_id_;
   std::string entity_;
   std::string body_;            // surowa odpowiedź z taska → konsumowana w loop()
+  bool insecure_{false};        // http zamiast https (omija TLS/cert → mało RAM)
   volatile bool busy_{false};   // GET trwa w tasku → nie startuj kolejnego
   volatile bool pending_{false};// update() zaznacza chęć pobrania; start w loop() gdy TLS wolne
   volatile bool have_body_{false};

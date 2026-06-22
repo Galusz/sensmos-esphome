@@ -20,7 +20,7 @@ namespace esphome {
 namespace sensmos {
 
 static const char *const TAG = "sensmos.get";
-static const char *const GET_URL = "https://api.sensmos.com/v1/ingest/get/";
+static const char *const GET_PATH = "api.sensmos.com/v1/ingest/get/";  // bez schematu (http/https z flagi)
 static const size_t MAX_BODY = 8192;
 
 // Blokujący GET ciała odpowiedzi — uruchamiany w OSOBNYM tasku (nie w pętli). Bez logowania.
@@ -49,10 +49,16 @@ static bool sensmos_http_get(const std::string &url, std::string &out) {
   esp_http_client_cleanup(client);
   return status == 200 && !out.empty();
 #elif defined(USE_ARDUINO)
-  WiFiClientSecure client;
-  client.setInsecure();  // v1: bez weryfikacji certu (dane publiczne, niski risk)
   HTTPClient http;
-  if (!http.begin(client, url.c_str()))
+  WiFiClientSecure sclient;
+  bool started;
+  if (url.rfind("https://", 0) == 0) {
+    sclient.setInsecure();  // v1: bez weryfikacji certu (dane publiczne, niski risk)
+    started = http.begin(sclient, url.c_str());
+  } else {
+    started = http.begin(url.c_str());  // plain http — bez TLS
+  }
+  if (!started)
     return false;
   http.setTimeout(8000);
   int code = http.GET();
@@ -137,7 +143,8 @@ void SensmosGetSensor::loop() {
   if (this->pending_ && !this->busy_ && network::is_connected() && net_acquire()) {
     this->pending_ = false;
     this->busy_ = true;
-    auto *job = new GetJob{this, GET_URL + this->device_id_};
+    std::string url = (this->insecure_ ? "http://" : "https://") + std::string(GET_PATH) + this->device_id_;
+    auto *job = new GetJob{this, std::move(url)};
     if (xTaskCreate(sensmos_get_task, "sensmos_get", 10240, job,
                     tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
       ESP_LOGW(TAG, "Failed to start fetch task");

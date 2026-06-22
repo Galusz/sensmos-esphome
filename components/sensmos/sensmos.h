@@ -20,6 +20,7 @@ class SensmosComponent : public PollingComponent {
     this->has_loc_ = true;
   }
   void set_label(const std::string &l) { this->label_ = l; }
+  void set_insecure(bool v) { this->insecure_ = v; }  // true → http:// (bez TLS, dla słabych nodów)
   void add_sensor(sensor::Sensor *s, const std::string &entity) {
     this->sensors_.emplace_back(s, entity);
   }
@@ -43,6 +44,7 @@ class SensmosComponent : public PollingComponent {
   float lat_{0.0f};
   float lon_{0.0f};
   bool has_loc_{false};
+  bool insecure_{false};           // http zamiast https (omija TLS/cert → mało RAM)
   std::vector<std::pair<sensor::Sensor *, std::string>> sensors_;
   volatile bool busy_{false};      // POST trwa w osobnym tasku → nie startuj kolejnego
   volatile bool pending_{false};   // update() zaznacza chęć wysyłki; start w loop() gdy TLS wolne

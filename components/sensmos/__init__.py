@@ -16,6 +16,7 @@ CONF_LAT = "lat"
 CONF_LON = "lon"
 CONF_LABEL = "label"
 CONF_SENSORS = "sensors"
+CONF_INSECURE = "insecure"
 
 SENSOR_MAP_SCHEMA = cv.Schema(
     {
@@ -32,6 +33,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_LAT): cv.float_,
         cv.Optional(CONF_LON): cv.float_,
         cv.Optional(CONF_LABEL): cv.string,
+        # http zamiast https (bez TLS/cert) — dla nodów z mało RAM (np. BLE). Domyślnie https.
+        cv.Optional(CONF_INSECURE, default=False): cv.boolean,
         cv.Required(CONF_SENSORS): cv.All(
             cv.ensure_list(SENSOR_MAP_SCHEMA), cv.Length(min=1, max=50)
         ),
@@ -44,6 +47,7 @@ async def to_code(config):
     await cg.register_component(var, config)
 
     cg.add(var.set_key(config[CONF_KEY]))
+    cg.add(var.set_insecure(config[CONF_INSECURE]))
     if CONF_LAT in config and CONF_LON in config:
         cg.add(var.set_location(config[CONF_LAT], config[CONF_LON]))
     if CONF_LABEL in config:

@@ -23,6 +23,7 @@ external_components:
 sensmos:
   key: !secret sensmos_key      # passkey, min 32 chars — this IS your node identity
   update_interval: 60s          # min 20s (the server rate-limits faster pushes)
+  # insecure: true              # plain HTTP, no TLS — for low-RAM nodes (e.g. heavy BLE) where HTTPS fails
   # lat/lon optional — without them the server uses GeoIP
   # lat: 52.2297
   # lon: 21.0122
@@ -144,6 +145,7 @@ Each `- platform: sensmos` entry = one remote entity → one ESPHome sensor. Add
 - **Timeout / pruning:** a software node goes offline after 48 h without a push and reappears automatically on the next one. Online/offline status is shown on the map.
 - **Up to 50 entities** per node.
 - **Non-blocking:** both publish (POST) and read (GET) run the HTTPS call in a separate FreeRTOS task, so they don't stall the main loop or BLE. Still, keep intervals sane (publish ≥ 60 s, read ≥ a few min).
+- **Low-RAM nodes:** on a memory-tight node (e.g. a big BLE stack like a BMS), the HTTPS handshake can fail with mbedTLS alloc errors (it must buffer the server cert). Add **`insecure: true`** to the `sensmos:` block and/or to a `- platform: sensmos` reader → it uses plain **HTTP** (no TLS, almost no RAM). It's telemetry and software nodes have no economy, so the risk is low.
 
 ## Part of the Sensmos project
 
