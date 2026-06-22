@@ -42,44 +42,74 @@ openssl rand -hex 24      # 48 hex chars
 
 ### Entity names
 
-- **`pub.<native>`** — a name from the Sensmos native list → categorized (PWR/ENV/LIF) and eligible for the heatmap.
-  PWR: `batt_soc batt_v batt_power load_power pv_power pv_daily grid_v grid_freq grid_import grid_export ev_charge`
-  ENV: `temp_out humidity_out pressure co2 pm25 pm10 noise_db uv_index rain_mm`
-  LIF: `temp_in humidity_in motion presence door window steps sleep_score`
-- **`own.<anything>`** — your own value → shown as the node's data (no heatmap), e.g. `own.cell_delta`.
+Pick **`pub.<native>`** to get a map category + heatmap, or **`own.<anything>`** for free-form data (shown on the node, no heatmap, e.g. `own.boiler_temp`).
 
-## Full example — JK-BMS over BLE
+Full native list:
 
-Drop-in on top of [syssi/esphome-jk-bms](https://github.com/syssi/esphome-jk-bms): just add `id:` to the sensors you want on the map and the `sensmos:` block.
+| Category | Entities |
+|----------|----------|
+| ⚡ **PWR** (power) | `batt_soc` `batt_v` `batt_power` `load_power` `pv_power` `pv_daily` `grid_v` `grid_freq` `grid_import` `grid_export` `ev_charge` |
+| 🌿 **ENV** (environment) | `temp_out` `humidity_out` `pressure` `co2` `pm25` `pm10` `noise_db` `uv_index` `rain_mm` |
+| 🏠 **LIF** (home) | `temp_in` `humidity_in` `motion` `presence` `door` `window` `steps` `sleep_score` `uptime_s` `wifi_nets` `wifi_rssi` |
+
+## Examples
+
+### Air quality (smog) — PMS5003
+
+Maps to native `pub.pm25` / `pub.pm10`, so it joins the air-quality heatmap on the map.
 
 ```yaml
 external_components:
-  - source: github://syssi/esphome-jk-bms@main
   - source: github://Galusz/sensmos-esphome@main
 
+uart:
+  rx_pin: GPIO16
+  tx_pin: GPIO17
+  baud_rate: 9600
+
 sensor:
-  - platform: jk_bms_ble
-    state_of_charge:
-      name: "${name} state of charge"
-      id: jk_soc
-    total_voltage:
-      name: "${name} total voltage"
-      id: jk_voltage
-    power:
-      name: "${name} power"
-      id: jk_power
-    # ... your other sensors unchanged ...
+  - platform: pmsx003
+    type: PMSX003
+    pm_2_5:
+      name: "PM2.5"
+      id: pm25
+    pm_10_0:
+      name: "PM10"
+      id: pm10
 
 sensmos:
   key: !secret sensmos_key
-  update_interval: 60s
   sensors:
-    - id: jk_soc
-      entity: pub.batt_soc
-    - id: jk_voltage
-      entity: pub.batt_v
-    - id: jk_power
-      entity: pub.batt_power
+    - id: pm25
+      entity: pub.pm25
+    - id: pm10
+      entity: pub.pm10
+```
+
+### Minimal — no extra hardware
+
+Just the ESP's own uptime + WiFi signal, to see a node appear on the map in a minute.
+
+```yaml
+external_components:
+  - source: github://Galusz/sensmos-esphome@main
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    id: dev_uptime
+  - platform: wifi_signal
+    name: "WiFi signal"
+    id: dev_rssi
+
+sensmos:
+  key: !secret sensmos_key
+  label: "My ESP"
+  sensors:
+    - id: dev_uptime
+      entity: pub.uptime_s
+    - id: dev_rssi
+      entity: pub.wifi_rssi
 ```
 
 And in `secrets.yaml`:
@@ -87,6 +117,8 @@ And in `secrets.yaml`:
 ```yaml
 sensmos_key: "paste-your-48-char-passkey-here-xxxxxxxxxxxx"
 ```
+
+> Got a battery/BMS, solar inverter, weather station…? Same pattern — give the sensors an `id:` and map them to `pub.batt_soc`, `pub.pv_power`, `pub.temp_out`, etc.
 
 ## Notes
 
