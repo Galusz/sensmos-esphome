@@ -1,4 +1,5 @@
 #include "sensmos.h"
+#include "sensmos_net.h"
 #include "esphome/core/log.h"
 #include "esphome/components/network/util.h"
 #include <cmath>
@@ -63,6 +64,7 @@ static void sensmos_post_task(void *arg) {
   PostJob *job = static_cast<PostJob *>(arg);
   int code = sensmos_http_post(job->body);
   job->self->finish(code);
+  net_release();  // zwolnij łącze TLS dla innych komponentów
   delete job;
   vTaskDelete(nullptr);
 }
@@ -122,6 +124,11 @@ void SensmosComponent::update() {
     ESP_LOGW(TAG, "Previous push still running — skipping this cycle");
     return;
   }
+  // tylko jedno połączenie TLS naraz (publish + readbacki) — inaczej alloc fail na ESP32+BLE
+  if (!net_acquire()) {
+    ESP_LOGD(TAG, "TLS busy (other Sensmos request) — skipping this cycle");
+    return;
+  }
 
   std::string body = this->build_payload_();
   ESP_LOGD(TAG, "Pushing %d entities to map", (int) this->sensors_.size());
@@ -133,6 +140,7 @@ void SensmosComponent::update() {
                   tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
     ESP_LOGW(TAG, "Failed to start push task");
     this->busy_ = false;
+    net_release();
     delete job;
   }
 }

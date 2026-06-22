@@ -1,4 +1,5 @@
 #include "get_sensor.h"
+#include "sensmos_net.h"
 #include "esphome/core/log.h"
 #include "esphome/components/network/util.h"
 #include "esphome/components/json/json_util.h"
@@ -98,6 +99,7 @@ static void sensmos_get_task(void *arg) {
   std::string body;
   bool ok = sensmos_http_get(job->url, body);
   job->self->finish_body(body, ok);
+  net_release();  // zwolnij łącze TLS dla innych komponentów
   delete job;
   vTaskDelete(nullptr);
 }
@@ -115,6 +117,11 @@ void SensmosGetSensor::update() {
     ESP_LOGW(TAG, "Previous fetch still running — skipping");
     return;
   }
+  // tylko jedno połączenie TLS naraz (publish + readbacki) — inaczej alloc fail na ESP32+BLE
+  if (!net_acquire()) {
+    ESP_LOGD(TAG, "TLS busy (other Sensmos request) — skipping this cycle");
+    return;
+  }
   this->busy_ = true;
   auto *job = new GetJob{this, GET_URL + this->device_id_};
   // osobny task: blokujący HTTPS/TLS nie zatrzymuje pętli ESPHome ani BLE
@@ -122,6 +129,7 @@ void SensmosGetSensor::update() {
                   tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
     ESP_LOGW(TAG, "Failed to start fetch task");
     this->busy_ = false;
+    net_release();
     delete job;
   }
 }

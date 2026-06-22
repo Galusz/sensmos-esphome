@@ -49,3 +49,4 @@ async def to_code(config):
     if CORE.is_esp32:
         esp32.include_builtin_idf_component("esp_http_client")
         esp32.add_idf_sdkconfig_option("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE", True)
+        esp32.add_idf_sdkconfig_option("CONFIG_MBEDTLS_DYNAMIC_BUFFER", True)
