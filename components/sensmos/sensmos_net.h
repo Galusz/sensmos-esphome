@@ -1,13 +1,23 @@
 #pragma once
 
+#include <string>
+
 namespace esphome {
 namespace sensmos {
 
-// Tylko JEDNO połączenie TLS naraz w całym komponencie (publish + wszystkie readbacki).
-// ESP32 + WiFi + BLE + mbedTLS(cert bundle) = mało RAM; równoległe handshake'i → alloc fail (-0x7F00).
-// acquire() wołane z pętli głównej (jednowątkowo), release() z taska po zakończeniu HTTP.
-bool net_acquire();
-void net_release();
+// Jedno zadanie HTTP wykonywane przez WSPÓLNY, trwały worker (publish + readbacki).
+// run() robi blokujące HTTP i dostarcza wynik (zdefiniowane w pliku komponentu — bez zależności krzyżowych).
+struct SensmosJob {
+  void (*run)(SensmosJob *);
+  void *self;
+  std::string url;
+  std::string body;
+};
+
+// Kolejkuje zadanie do persistentnego workera (task tworzony raz, STATYCZNY stos → brak
+// alokacji/zwalniania dużego stosu per request → brak fragmentacji sterty, brak crashy OOM).
+// Zwraca false gdy kolejka pełna. Wołane z pętli głównej (jednowątkowo).
+bool net_submit(SensmosJob *job);
 
 }  // namespace sensmos
 }  // namespace esphome

@@ -5,8 +5,6 @@
 #include "esphome/components/json/json_util.h"
 #include <cstdlib>
 #include <new>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 
 #ifdef USE_ESP_IDF
 #include "esp_http_client.h"
@@ -96,19 +94,11 @@ static bool parse_value(const std::string &body, const std::string &entity, floa
   return found;
 }
 
-struct GetJob {
-  SensmosGetSensor *self;
-  std::string url;
-};
-
-static void sensmos_get_task(void *arg) {
-  GetJob *job = static_cast<GetJob *>(arg);
-  std::string body;
-  bool ok = sensmos_http_get(job->url, body);
-  job->self->finish_body(body, ok);
-  net_release();  // zwolnij łącze TLS dla innych komponentów
-  delete job;
-  vTaskDelete(nullptr);
+// wykonywane w trwałym workerze sensmos_net: HTTP GET + zapis odpowiedzi (parsowanie w pętli)
+static void get_run(SensmosJob *job) {
+  std::string resp;
+  bool ok = sensmos_http_get(job->url, resp);
+  static_cast<SensmosGetSensor *>(job->self)->finish_body(resp, ok);
 }
 
 void SensmosGetSensor::dump_config() {
@@ -141,24 +131,19 @@ void SensmosGetSensor::loop() {
 
   // 2) wystartuj nowe pobranie, gdy zaplanowane i łącze TLS wolne (jedno naraz w całym komponencie).
   // Jak zajęte, próbujemy w kolejnym loop() — bez czekania na następny interwał (brak głodzenia).
-  if (this->pending_ && !this->busy_ && network::is_connected() && net_acquire()) {
-    this->pending_ = false;
-    this->busy_ = true;
+  if (this->pending_ && !this->busy_ && network::is_connected()) {
     std::string url = (this->insecure_ ? "http://" : "https://") + std::string(GET_PATH) + this->device_id_;
     // nothrow: przy braku RAM ZWRÓĆ null zamiast crashować node (wyjątki w ESP-IDF wyłączone)
-    auto *job = new (std::nothrow) GetJob{this, std::move(url)};
+    auto *job = new (std::nothrow) SensmosJob{get_run, this, std::move(url), std::string()};
     if (job == nullptr) {
       ESP_LOGW(TAG, "Low heap — skipping fetch");
-      this->busy_ = false;
-      net_release();
-      return;
+      return;  // pending_ zostaje → spróbuje w kolejnym cyklu
     }
-    uint32_t stack = this->insecure_ ? 6144 : 10240;  // HTTP nie potrzebuje wielkiego stosu
-    if (xTaskCreate(sensmos_get_task, "sensmos_get", stack, job,
-                    tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
-      ESP_LOGW(TAG, "Failed to start fetch task");
+    this->pending_ = false;
+    this->busy_ = true;
+    // do trwałego workera (statyczny stos) — bez tworzenia taska per request → bez fragmentacji
+    if (!net_submit(job)) {
       this->busy_ = false;
-      net_release();
       delete job;
     }
   }

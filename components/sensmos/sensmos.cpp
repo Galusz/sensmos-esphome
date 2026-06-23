@@ -5,8 +5,6 @@
 #include <cmath>
 #include <cstdio>
 #include <new>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 
 #ifdef USE_ESP_IDF
 #include "esp_http_client.h"
@@ -62,19 +60,10 @@ static int sensmos_http_post(const std::string &url, const std::string &body) {
 #endif
 }
 
-struct PostJob {
-  SensmosComponent *self;
-  std::string url;
-  std::string body;
-};
-
-static void sensmos_post_task(void *arg) {
-  PostJob *job = static_cast<PostJob *>(arg);
+// wykonywane w trwałym workerze sensmos_net: HTTP POST + zapis wyniku (logujemy w pętli, nie tu)
+static void post_run(SensmosJob *job) {
   int code = sensmos_http_post(job->url, job->body);
-  job->self->finish(code);
-  net_release();  // zwolnij łącze dla innych komponentów
-  delete job;
-  vTaskDelete(nullptr);
+  static_cast<SensmosComponent *>(job->self)->finish(code);
 }
 
 void SensmosComponent::dump_config() {
@@ -132,32 +121,21 @@ void SensmosComponent::loop() {
     return;
   if (!network::is_connected())
     return;
-  // tylko jedno połączenie TLS naraz (publish + readbacki) — inaczej alloc fail na ESP32+BLE.
-  // Jak zajęte, próbujemy w kolejnym loop() (bez czekania na następny interwał → brak głodzenia).
-  if (!net_acquire())
-    return;
 
-  this->pending_ = false;
-  this->busy_ = true;
   std::string body = this->build_payload_();
   std::string url = (this->insecure_ ? "http://" : "https://") + std::string(INGEST_PATH);
-  ESP_LOGD(TAG, "Pushing %d entities to map", (int) this->sensors_.size());
   // nothrow: przy braku RAM ZWRÓĆ null zamiast crashować node (wyjątki w ESP-IDF wyłączone)
-  auto *job = new (std::nothrow) PostJob{this, std::move(url), std::move(body)};
+  auto *job = new (std::nothrow) SensmosJob{post_run, this, std::move(url), std::move(body)};
   if (job == nullptr) {
     ESP_LOGW(TAG, "Low heap — skipping push");
-    this->busy_ = false;
-    net_release();
-    return;
+    return;  // pending_ zostaje → spróbuje w kolejnym cyklu
   }
-  // osobny task: blokujący HTTPS/TLS nie zatrzymuje pętli ESPHome ani BLE.
-  // HTTP nie potrzebuje wielkiego stosu — mniejszy stos = mniej zajętej sterty.
-  uint32_t stack = this->insecure_ ? 6144 : 10240;
-  if (xTaskCreate(sensmos_post_task, "sensmos_post", stack, job,
-                  tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
-    ESP_LOGW(TAG, "Failed to start push task");
+  this->pending_ = false;
+  this->busy_ = true;
+  ESP_LOGD(TAG, "Pushing %d entities to map", (int) this->sensors_.size());
+  // do trwałego workera (statyczny stos) — bez tworzenia taska per request → bez fragmentacji
+  if (!net_submit(job)) {
     this->busy_ = false;
-    net_release();
     delete job;
   }
 }
