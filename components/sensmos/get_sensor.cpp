@@ -4,6 +4,7 @@
 #include "esphome/components/network/util.h"
 #include "esphome/components/json/json_util.h"
 #include <cstdlib>
+#include <new>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -21,7 +22,7 @@ namespace sensmos {
 
 static const char *const TAG = "sensmos.get";
 static const char *const GET_PATH = "api.sensmos.com/v1/ingest/get/";  // bez schematu (http/https z flagi)
-static const size_t MAX_BODY = 8192;
+static const size_t MAX_BODY = 4096;  // odpowiedzi są małe; mniejszy bufor = mniej sterty
 
 // Blokujący GET ciała odpowiedzi — uruchamiany w OSOBNYM tasku (nie w pętli). Bez logowania.
 static bool sensmos_http_get(const std::string &url, std::string &out) {
@@ -144,8 +145,16 @@ void SensmosGetSensor::loop() {
     this->pending_ = false;
     this->busy_ = true;
     std::string url = (this->insecure_ ? "http://" : "https://") + std::string(GET_PATH) + this->device_id_;
-    auto *job = new GetJob{this, std::move(url)};
-    if (xTaskCreate(sensmos_get_task, "sensmos_get", 10240, job,
+    // nothrow: przy braku RAM ZWRÓĆ null zamiast crashować node (wyjątki w ESP-IDF wyłączone)
+    auto *job = new (std::nothrow) GetJob{this, std::move(url)};
+    if (job == nullptr) {
+      ESP_LOGW(TAG, "Low heap — skipping fetch");
+      this->busy_ = false;
+      net_release();
+      return;
+    }
+    uint32_t stack = this->insecure_ ? 6144 : 10240;  // HTTP nie potrzebuje wielkiego stosu
+    if (xTaskCreate(sensmos_get_task, "sensmos_get", stack, job,
                     tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
       ESP_LOGW(TAG, "Failed to start fetch task");
       this->busy_ = false;

@@ -4,6 +4,7 @@
 #include "esphome/components/network/util.h"
 #include <cmath>
 #include <cstdio>
+#include <new>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -141,9 +142,18 @@ void SensmosComponent::loop() {
   std::string body = this->build_payload_();
   std::string url = (this->insecure_ ? "http://" : "https://") + std::string(INGEST_PATH);
   ESP_LOGD(TAG, "Pushing %d entities to map", (int) this->sensors_.size());
-  auto *job = new PostJob{this, std::move(url), std::move(body)};
-  // osobny task: blokujący HTTPS/TLS nie zatrzymuje pętli ESPHome ani BLE
-  if (xTaskCreate(sensmos_post_task, "sensmos_post", 10240, job,
+  // nothrow: przy braku RAM ZWRÓĆ null zamiast crashować node (wyjątki w ESP-IDF wyłączone)
+  auto *job = new (std::nothrow) PostJob{this, std::move(url), std::move(body)};
+  if (job == nullptr) {
+    ESP_LOGW(TAG, "Low heap — skipping push");
+    this->busy_ = false;
+    net_release();
+    return;
+  }
+  // osobny task: blokujący HTTPS/TLS nie zatrzymuje pętli ESPHome ani BLE.
+  // HTTP nie potrzebuje wielkiego stosu — mniejszy stos = mniej zajętej sterty.
+  uint32_t stack = this->insecure_ ? 6144 : 10240;
+  if (xTaskCreate(sensmos_post_task, "sensmos_post", stack, job,
                   tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
     ESP_LOGW(TAG, "Failed to start push task");
     this->busy_ = false;
